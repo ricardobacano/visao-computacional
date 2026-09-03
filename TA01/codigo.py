@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from __future__ import annotations
+"""Segmentação de imagens usando características de textura."""
 
 import argparse
 import csv
@@ -15,9 +15,11 @@ from sklearn.cluster import MiniBatchKMeans
 from sklearn.preprocessing import StandardScaler
 
 
-EXTENSOES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
-ORIENTACOES = (0, 45, 90, 135)
-NOMES_BASE = (
+# Formatos de imagem aceitos pelo programa.
+EXTENSOES = [".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"]
+ORIENTACOES = [0, 45, 90, 135]
+
+NOMES_DOS_FILTROS = [
     "gabor_0",
     "gabor_45",
     "gabor_90",
@@ -26,298 +28,533 @@ NOMES_BASE = (
     "diferenca_gaussianas",
     "gradiente_sobel",
     "desvio_padrao_local",
-)
+]
 
 
-def argumentos() -> argparse.Namespace:
+def ler_argumentos():
     parser = argparse.ArgumentParser(
-        description="Segmenta uma pasta de imagens usando 24 atributos de textura."
+        description="Segmenta imagens usando 24 características de textura."
     )
+
     parser.add_argument(
         "--entrada",
         type=Path,
         required=True,
-        help="Imagem ou diretório contendo imagens (subpastas também são lidas).",
+        help="Imagem ou pasta contendo as imagens.",
     )
     parser.add_argument(
-        "--saida", type=Path, default=Path("resultados"), help="Diretório de saída."
+        "--saida",
+        type=Path,
+        default=Path("resultados"),
+        help="Pasta onde os resultados serão salvos.",
     )
     parser.add_argument(
-        "--grupos", type=int, default=5, help="Quantidade de grupos de textura (K)."
+        "--grupos",
+        type=int,
+        default=5,
+        help="Quantidade de grupos do K-means.",
     )
     parser.add_argument(
         "--janela",
         type=int,
         default=21,
-        help="Lado ímpar da janela usada para calcular as médias locais.",
+        help="Tamanho da janela usada para calcular as médias locais.",
     )
     parser.add_argument(
         "--amostras-por-imagem",
         type=int,
         default=8000,
-        help="Pixels sorteados por imagem para treinar o agrupamento.",
+        help="Quantidade de pixels usados no treinamento por imagem.",
     )
     parser.add_argument(
         "--tamanho",
         type=int,
         default=512,
-        help="Tamanho do recorte quadrado usado no processamento.",
+        help="Tamanho do recorte quadrado.",
     )
     parser.add_argument(
         "--ajuste",
-        choices=("corte", "redimensionar"),
+        choices=["corte", "corte-ajustado", "redimensionar"],
         default="corte",
-        help="'corte' preserva proporções; 'redimensionar' força um quadrado.",
+        help="Forma usada para deixar a imagem quadrada.",
     )
-    parser.add_argument("--semente", type=int, default=42)
+    parser.add_argument(
+        "--semente",
+        type=int,
+        default=42,
+        help="Semente usada para repetir o mesmo experimento.",
+    )
+
     return parser.parse_args()
 
 
-def listar_imagens(entrada: Path) -> list[Path]:
+def buscar_imagens(entrada):
+    imagens = []
+
     if entrada.is_file():
-        return [entrada] if entrada.suffix.lower() in EXTENSOES else []
+        if entrada.suffix.lower() in EXTENSOES:
+            imagens.append(entrada)
+        return imagens
+
     if not entrada.is_dir():
-        return []
-    return sorted(
-        caminho
-        for caminho in entrada.rglob("*")
-        if caminho.is_file() and caminho.suffix.lower() in EXTENSOES
-    )
+        return imagens
+
+    # rglob também procura imagens dentro das subpastas.
+    for caminho in entrada.rglob("*"):
+        if caminho.is_file() and caminho.suffix.lower() in EXTENSOES:
+            imagens.append(caminho)
+
+    imagens.sort()
+    return imagens
 
 
-def ler_cinza_quadrada(caminho: Path, tamanho: int, ajuste: str) -> np.ndarray:
-    dados = np.fromfile(str(caminho), dtype=np.uint8)
+def carregar_imagem(caminho, tamanho, ajuste):
+    dados = np.frombuffer(caminho.read_bytes(), dtype=np.uint8)
     imagem = cv2.imdecode(dados, cv2.IMREAD_GRAYSCALE)
+
     if imagem is None:
-        raise ValueError("OpenCV não conseguiu decodificar o arquivo")
+        raise ValueError("o OpenCV não conseguiu abrir a imagem")
 
     if ajuste == "redimensionar":
-        return cv2.resize(imagem, (tamanho, tamanho), interpolation=cv2.INTER_AREA)
+        return cv2.resize(
+            imagem,
+            (tamanho, tamanho),
+            interpolation=cv2.INTER_AREA,
+        )
 
     altura, largura = imagem.shape
+
+    if ajuste == "corte":
+        if largura < tamanho or altura < tamanho:
+            raise ValueError(
+                f"a imagem possui {largura}x{altura}, mas o corte exige "
+                f"pelo menos {tamanho}x{tamanho} pixels"
+            )
+
+        inicio_x = (largura - tamanho) // 2
+        inicio_y = (altura - tamanho) // 2
+
+        return imagem[
+            inicio_y : inicio_y + tamanho,
+            inicio_x : inicio_x + tamanho,
+        ]
+
+    # O corte ajustado redimensiona sem deformar e depois recorta o centro.
     escala = max(tamanho / largura, tamanho / altura)
     nova_largura = max(tamanho, int(round(largura * escala)))
     nova_altura = max(tamanho, int(round(altura * escala)))
-    interpolacao = cv2.INTER_CUBIC if escala > 1 else cv2.INTER_AREA
-    imagem = cv2.resize(imagem, (nova_largura, nova_altura), interpolation=interpolacao)
-    x0 = (nova_largura - tamanho) // 2
-    y0 = (nova_altura - tamanho) // 2
-    return imagem[y0 : y0 + tamanho, x0 : x0 + tamanho]
+
+    if escala > 1:
+        interpolacao = cv2.INTER_CUBIC
+    else:
+        interpolacao = cv2.INTER_AREA
+
+    imagem = cv2.resize(
+        imagem,
+        (nova_largura, nova_altura),
+        interpolation=interpolacao,
+    )
+
+    inicio_x = (nova_largura - tamanho) // 2
+    inicio_y = (nova_altura - tamanho) // 2
+
+    return imagem[
+        inicio_y : inicio_y + tamanho,
+        inicio_x : inicio_x + tamanho,
+    ]
 
 
-def kernel_circular(tamanho: int = 15) -> np.ndarray:
-    """Filtro circular tipo centro-periferia, com soma aproximadamente zero."""
-    eixo = np.arange(tamanho, dtype=np.float32) - (tamanho - 1) / 2
-    xx, yy = np.meshgrid(eixo, eixo)
-    raio = np.sqrt(xx * xx + yy * yy)
+def criar_filtro_circular(tamanho=15):
+    eixo = np.arange(tamanho, dtype=np.float32)
+    eixo = eixo - (tamanho - 1) / 2
+
+    x, y = np.meshgrid(eixo, eixo)
+    raio = np.sqrt(x * x + y * y)
+
     centro = raio <= tamanho * 0.18
     anel = (raio > tamanho * 0.28) & (raio <= tamanho * 0.46)
-    kernel = np.zeros((tamanho, tamanho), dtype=np.float32)
-    kernel[centro] = -1.0 / max(1, int(centro.sum()))
-    kernel[anel] = 1.0 / max(1, int(anel.sum()))
-    return kernel
+
+    filtro = np.zeros((tamanho, tamanho), dtype=np.float32)
+    filtro[centro] = -1.0 / max(1, int(centro.sum()))
+    filtro[anel] = 1.0 / max(1, int(anel.sum()))
+
+    return filtro
 
 
-def respostas_textura(imagem: np.ndarray) -> list[np.ndarray]:
-    """Retorna oito mapas de resposta na escala recebida."""
-    img = imagem.astype(np.float32) / 255.0
-    respostas: list[np.ndarray] = []
+def aplicar_filtros(imagem):
+    imagem_float = imagem.astype(np.float32) / 255.0
+    respostas = []
 
-    for graus in ORIENTACOES:
-        kernel = cv2.getGaborKernel(
+    # Quatro filtros Gabor, um para cada orientação pedida no trabalho.
+    for angulo in ORIENTACOES:
+        filtro_gabor = cv2.getGaborKernel(
             ksize=(15, 15),
             sigma=3.0,
-            theta=math.radians(graus),
+            theta=math.radians(angulo),
             lambd=7.0,
             gamma=0.55,
             psi=0,
             ktype=cv2.CV_32F,
         )
-        kernel /= np.sum(np.abs(kernel)) + 1e-8
-        resposta = cv2.filter2D(img, cv2.CV_32F, kernel, borderType=cv2.BORDER_REFLECT)
+
+        soma = np.sum(np.abs(filtro_gabor)) + 1e-8
+        filtro_gabor = filtro_gabor / soma
+
+        resposta = cv2.filter2D(
+            imagem_float,
+            cv2.CV_32F,
+            filtro_gabor,
+            borderType=cv2.BORDER_REFLECT,
+        )
         respostas.append(np.abs(resposta))
 
-    circular = cv2.filter2D(
-        img, cv2.CV_32F, kernel_circular(), borderType=cv2.BORDER_REFLECT
+    # Quinta característica: filtro circular centro-anel.
+    resposta_circular = cv2.filter2D(
+        imagem_float,
+        cv2.CV_32F,
+        criar_filtro_circular(),
+        borderType=cv2.BORDER_REFLECT,
     )
-    respostas.append(np.abs(circular))
+    respostas.append(np.abs(resposta_circular))
 
-    suave_1 = cv2.GaussianBlur(img, (0, 0), sigmaX=1.0)
-    suave_2 = cv2.GaussianBlur(img, (0, 0), sigmaX=2.4)
-    respostas.append(np.abs(suave_1 - suave_2))
+    # Sexta característica: diferença entre duas suavizações gaussianas.
+    gaussiana_1 = cv2.GaussianBlur(imagem_float, (0, 0), sigmaX=1.0)
+    gaussiana_2 = cv2.GaussianBlur(imagem_float, (0, 0), sigmaX=2.4)
+    respostas.append(np.abs(gaussiana_1 - gaussiana_2))
 
-    gx = cv2.Sobel(img, cv2.CV_32F, 1, 0, ksize=3)
-    gy = cv2.Sobel(img, cv2.CV_32F, 0, 1, ksize=3)
-    respostas.append(cv2.magnitude(gx, gy))
+    # Sétima característica: intensidade do gradiente Sobel.
+    gradiente_x = cv2.Sobel(imagem_float, cv2.CV_32F, 1, 0, ksize=3)
+    gradiente_y = cv2.Sobel(imagem_float, cv2.CV_32F, 0, 1, ksize=3)
+    respostas.append(cv2.magnitude(gradiente_x, gradiente_y))
 
-    media = cv2.boxFilter(img, cv2.CV_32F, (9, 9), normalize=True)
-    media_quadrados = cv2.boxFilter(img * img, cv2.CV_32F, (9, 9), normalize=True)
-    variancia = np.maximum(media_quadrados - media * media, 0)
+    # O desvio-padrão local é a oitava característica.
+    media = cv2.boxFilter(
+        imagem_float,
+        cv2.CV_32F,
+        (9, 9),
+        normalize=True,
+    )
+    media_quadrados = cv2.boxFilter(
+        imagem_float * imagem_float,
+        cv2.CV_32F,
+        (9, 9),
+        normalize=True,
+    )
+    variancia = media_quadrados - media * media
+    variancia = np.maximum(variancia, 0)
     respostas.append(np.sqrt(variancia))
 
-    assert len(respostas) == 8
+    if len(respostas) != 8:
+        raise RuntimeError("deveriam existir 8 respostas de textura")
+
     return respostas
 
 
-def extrair_descritor(imagem: np.ndarray, janela: int) -> np.ndarray:
-    """Gera H x W x 24 atributos: médias locais de 8 filtros em 3 escalas."""
+def criar_descritor(imagem, tamanho_janela):
     altura, largura = imagem.shape
-    atual = imagem
-    atributos: list[np.ndarray] = []
+    imagem_da_escala = imagem
+    caracteristicas = []
 
-    for _escala in range(3):
-        for resposta in respostas_textura(atual):
+    # O mesmo conjunto de oito características é usado em três escalas.
+    for numero_escala in range(3):
+        respostas = aplicar_filtros(imagem_da_escala)
+
+        for resposta in respostas:
             media_local = cv2.boxFilter(
                 resposta,
                 cv2.CV_32F,
-                (janela, janela),
+                (tamanho_janela, tamanho_janela),
                 normalize=True,
                 borderType=cv2.BORDER_REFLECT,
             )
+
             if media_local.shape != (altura, largura):
                 media_local = cv2.resize(
-                    media_local, (largura, altura), interpolation=cv2.INTER_LINEAR
+                    media_local,
+                    (largura, altura),
+                    interpolation=cv2.INTER_LINEAR,
                 )
-            atributos.append(media_local)
-        atual = cv2.pyrDown(atual)
 
-    descritor = np.stack(atributos, axis=-1).astype(np.float32)
+            caracteristicas.append(media_local)
+
+        if numero_escala < 2:
+            imagem_da_escala = cv2.pyrDown(imagem_da_escala)
+
+    descritor = np.stack(caracteristicas, axis=-1)
+    descritor = descritor.astype(np.float32)
+
     if descritor.shape[2] != 24:
-        raise RuntimeError(f"Descritor deveria ter 24 dimensões: {descritor.shape}")
+        raise RuntimeError(
+            f"o descritor deveria possuir 24 dimensões: {descritor.shape}"
+        )
+
     return descritor
 
 
-def paleta_grupos(quantidade: int) -> np.ndarray:
-    hsv = np.zeros((quantidade, 1, 3), dtype=np.uint8)
-    hsv[:, 0, 0] = np.linspace(0, 179, quantidade, endpoint=False).astype(np.uint8)
-    hsv[:, 0, 1] = 210
-    hsv[:, 0, 2] = 240
-    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[:, 0, :]
+def criar_paleta(quantidade_grupos):
+    cores_hsv = np.zeros((quantidade_grupos, 1, 3), dtype=np.uint8)
+    tons = np.linspace(0, 179, quantidade_grupos, endpoint=False)
+
+    cores_hsv[:, 0, 0] = tons.astype(np.uint8)
+    cores_hsv[:, 0, 1] = 210
+    cores_hsv[:, 0, 2] = 240
+
+    cores_bgr = cv2.cvtColor(cores_hsv, cv2.COLOR_HSV2BGR)
+    return cores_bgr[:, 0, :]
 
 
-def nome_saida(caminho: Path, indice: int) -> str:
-    seguro = "".join(c if c.isalnum() or c in "-_" else "_" for c in caminho.stem)
-    return f"{indice:03d}_{seguro}"
+def criar_nome_saida(caminho, numero):
+    nome = ""
+
+    for caractere in caminho.stem:
+        if caractere.isalnum() or caractere in "-_":
+            nome += caractere
+        else:
+            nome += "_"
+
+    return f"{numero:03d}_{nome}"
 
 
-def salvar_png(caminho: Path, imagem: np.ndarray) -> None:
-    ok, buffer = cv2.imencode(".png", imagem)
-    if not ok:
-        raise OSError(f"Falha ao codificar {caminho}")
-    caminho.write_bytes(buffer.tobytes())
+def salvar_imagem(caminho, imagem):
+    sucesso, dados = cv2.imencode(".png", imagem)
+
+    if not sucesso:
+        raise OSError(f"não foi possível salvar {caminho}")
+
+    caminho.write_bytes(dados.tobytes())
 
 
-def processar(args: argparse.Namespace) -> None:
+def validar_configuracao(args):
     if args.grupos < 2:
         raise ValueError("--grupos deve ser pelo menos 2")
+
     if args.janela < 3 or args.janela % 2 == 0:
         raise ValueError("--janela deve ser ímpar e pelo menos 3")
+
     if args.tamanho < 64:
         raise ValueError("--tamanho deve ser pelo menos 64")
 
-    caminhos = listar_imagens(args.entrada)
-    if not caminhos:
-        raise FileNotFoundError(f"Nenhuma imagem encontrada em: {args.entrada}")
+    if args.amostras_por_imagem < 1:
+        raise ValueError("--amostras-por-imagem deve ser pelo menos 1")
 
-    args.saida.mkdir(parents=True, exist_ok=True)
-    rng = np.random.default_rng(args.semente)
-    amostras: list[np.ndarray] = []
-    validas: list[Path] = []
 
-    print(f"Encontradas {len(caminhos)} imagens. Extraindo amostras para o K-means...")
-    for indice, caminho in enumerate(caminhos, start=1):
+def validar_pastas(entrada, saida):
+    if not entrada.is_dir():
+        return
+
+    entrada_completa = entrada.resolve()
+    saida_completa = saida.resolve()
+
+    if saida_completa == entrada_completa:
+        raise ValueError("a pasta de saída não pode ser igual à pasta de entrada")
+
+    if entrada_completa in saida_completa.parents:
+        raise ValueError("a pasta de saída não pode ficar dentro da pasta de entrada")
+
+
+def coletar_amostras(args, caminhos, gerador_aleatorio):
+    amostras = []
+    imagens_validas = []
+    total = len(caminhos)
+
+    print(f"Encontradas {total} imagens.")
+    print("Extraindo amostras para treinar o K-means...")
+
+    for numero, caminho in enumerate(caminhos, start=1):
         try:
-            imagem = ler_cinza_quadrada(caminho, args.tamanho, args.ajuste)
-            descritor = extrair_descritor(imagem, args.janela).reshape(-1, 24)
+            imagem = carregar_imagem(caminho, args.tamanho, args.ajuste)
+            descritor = criar_descritor(imagem, args.janela)
+            descritor = descritor.reshape(-1, 24)
+
             quantidade = min(args.amostras_por_imagem, descritor.shape[0])
-            posicoes = rng.choice(descritor.shape[0], quantidade, replace=False)
+            posicoes = gerador_aleatorio.choice(
+                descritor.shape[0],
+                quantidade,
+                replace=False,
+            )
+
             amostras.append(descritor[posicoes])
-            validas.append(caminho)
-            print(f"  [{indice}/{len(caminhos)}] {caminho.name}")
+            imagens_validas.append(caminho)
+            print(f"  [{numero}/{total}] {caminho.name}")
+
         except Exception as erro:
-            print(f"  AVISO: ignorando {caminho}: {erro}", file=sys.stderr)
+            print(
+                f"  AVISO: ignorando {caminho}: {erro}",
+                file=sys.stderr,
+            )
 
-    if not validas:
-        raise RuntimeError("Nenhuma imagem pôde ser processada")
-    if len(validas) < 32:
-        print(
-            f"AVISO: foram processadas {len(validas)} imagens; o enunciado pede ao menos 32.",
-            file=sys.stderr,
-        )
+    return amostras, imagens_validas
 
-    treino = np.concatenate(amostras, axis=0)
-    scaler = StandardScaler()
-    treino_normalizado = scaler.fit_transform(treino)
+
+def treinar_kmeans(amostras, quantidade_grupos, semente):
+    dados_treinamento = np.concatenate(amostras, axis=0)
+
+    # A padronização evita que uma característica domine as outras.
+    padronizador = StandardScaler()
+    dados_padronizados = padronizador.fit_transform(dados_treinamento)
+
     kmeans = MiniBatchKMeans(
-        n_clusters=args.grupos,
-        random_state=args.semente,
+        n_clusters=quantidade_grupos,
+        random_state=semente,
         batch_size=4096,
         n_init=10,
         max_iter=200,
     )
-    kmeans.fit(treino_normalizado)
-    del treino, treino_normalizado, amostras
+    kmeans.fit(dados_padronizados)
 
-    paleta = paleta_grupos(args.grupos)
-    linhas_csv: list[list[object]] = []
-    print("Gerando imagens categorizadas...")
+    return padronizador, kmeans
 
-    for indice, caminho in enumerate(validas, start=1):
-        imagem = ler_cinza_quadrada(caminho, args.tamanho, args.ajuste)
-        descritor = extrair_descritor(imagem, args.janela)
-        plano = descritor.reshape(-1, 24)
-        rotulos = kmeans.predict(scaler.transform(plano)).reshape(imagem.shape)
-        colorida = paleta[rotulos]
-        base_bgr = cv2.cvtColor(imagem, cv2.COLOR_GRAY2BGR)
-        sobreposta = cv2.addWeighted(base_bgr, 0.42, colorida, 0.58, 0)
 
-        prefixo = nome_saida(caminho, indice)
-        salvar_png(args.saida / f"{prefixo}_cinza.png", imagem)
-        salvar_png(args.saida / f"{prefixo}_grupos.png", colorida)
-        salvar_png(args.saida / f"{prefixo}_sobreposicao.png", sobreposta)
-        salvar_png(args.saida / f"{prefixo}_rotulos.png", rotulos.astype(np.uint8))
+def gerar_resultados(args, imagens_validas, padronizador, kmeans):
+    paleta = criar_paleta(args.grupos)
+    linhas_csv = []
+    total = len(imagens_validas)
+
+    print("Gerando as imagens categorizadas...")
+
+    for numero, caminho in enumerate(imagens_validas, start=1):
+        imagem = carregar_imagem(caminho, args.tamanho, args.ajuste)
+        descritor = criar_descritor(imagem, args.janela)
+        descritor_em_linhas = descritor.reshape(-1, 24)
+
+        dados_padronizados = padronizador.transform(descritor_em_linhas)
+        rotulos = kmeans.predict(dados_padronizados)
+        rotulos = rotulos.reshape(imagem.shape)
+
+        imagem_grupos = paleta[rotulos]
+        imagem_cinza_bgr = cv2.cvtColor(imagem, cv2.COLOR_GRAY2BGR)
+        sobreposicao = cv2.addWeighted(
+            imagem_cinza_bgr,
+            0.42,
+            imagem_grupos,
+            0.58,
+            0,
+        )
+
+        nome = criar_nome_saida(caminho, numero)
+
+        salvar_imagem(args.saida / f"{nome}_cinza.png", imagem)
+        salvar_imagem(args.saida / f"{nome}_grupos.png", imagem_grupos)
+        salvar_imagem(args.saida / f"{nome}_sobreposicao.png", sobreposicao)
+        salvar_imagem(
+            args.saida / f"{nome}_rotulos.png",
+            rotulos.astype(np.uint8),
+        )
 
         contagens = np.bincount(rotulos.ravel(), minlength=args.grupos)
         porcentagens = 100.0 * contagens / contagens.sum()
-        linhas_csv.append(
-            [str(caminho), *[round(float(valor), 4) for valor in porcentagens]]
-        )
-        print(f"  [{indice}/{len(validas)}] {caminho.name}")
 
-    with (args.saida / "proporcao_grupos.csv").open("w", newline="", encoding="utf-8") as arquivo:
+        linha = [str(caminho)]
+        for valor in porcentagens:
+            linha.append(round(float(valor), 4))
+        linhas_csv.append(linha)
+
+        print(f"  [{numero}/{total}] {caminho.name}")
+
+    return linhas_csv
+
+
+def salvar_csv(args, linhas_csv):
+    caminho_csv = args.saida / "proporcao_grupos.csv"
+
+    cabecalho = ["imagem"]
+    for grupo in range(args.grupos):
+        cabecalho.append(f"grupo_{grupo}_percentual")
+
+    with caminho_csv.open("w", newline="", encoding="utf-8") as arquivo:
         escritor = csv.writer(arquivo)
-        escritor.writerow(["imagem", *[f"grupo_{i}_percentual" for i in range(args.grupos)]])
+        escritor.writerow(cabecalho)
         escritor.writerows(linhas_csv)
 
-    nomes_atributos = [
-        f"escala_{escala}_{nome}"
-        for escala in (1, 2, 3)
-        for nome in NOMES_BASE
-    ]
+
+def salvar_metadados(args, quantidade_imagens, padronizador, kmeans):
+    nomes_dos_atributos = []
+
+    for escala in [1, 2, 3]:
+        for nome in NOMES_DOS_FILTROS:
+            nomes_dos_atributos.append(f"escala_{escala}_{nome}")
+
     metadados = {
         "entrada": str(args.entrada),
-        "quantidade_imagens": len(validas),
+        "quantidade_imagens": quantidade_imagens,
         "tamanho": [args.tamanho, args.tamanho],
+        "ajuste": args.ajuste,
         "janela": args.janela,
         "grupos": args.grupos,
+        "amostras_por_imagem": args.amostras_por_imagem,
         "dimensoes_descritor": 24,
-        "atributos": nomes_atributos,
-        "orientacoes_gabor_graus": list(ORIENTACOES),
+        "atributos": nomes_dos_atributos,
+        "orientacoes_gabor_graus": ORIENTACOES,
         "escalas_piramide": [1, 0.5, 0.25],
         "centroides_padronizados": kmeans.cluster_centers_.tolist(),
-        "media_padronizacao": scaler.mean_.tolist(),
-        "escala_padronizacao": scaler.scale_.tolist(),
+        "inercia_kmeans": float(kmeans.inertia_),
+        "iteracoes_kmeans": int(kmeans.n_iter_),
+        "media_padronizacao": padronizador.mean_.tolist(),
+        "escala_padronizacao": padronizador.scale_.tolist(),
         "semente": args.semente,
     }
-    (args.saida / "metadados.json").write_text(
-        json.dumps(metadados, ensure_ascii=False, indent=2), encoding="utf-8"
+
+    caminho_json = args.saida / "metadados.json"
+    texto_json = json.dumps(metadados, ensure_ascii=False, indent=2)
+    caminho_json.write_text(texto_json, encoding="utf-8")
+
+
+def processar(args):
+    validar_configuracao(args)
+
+    caminhos = buscar_imagens(args.entrada)
+    if not caminhos:
+        raise FileNotFoundError(f"nenhuma imagem encontrada em: {args.entrada}")
+
+    validar_pastas(args.entrada, args.saida)
+    args.saida.mkdir(parents=True, exist_ok=True)
+
+    gerador_aleatorio = np.random.default_rng(args.semente)
+
+    amostras, imagens_validas = coletar_amostras(
+        args,
+        caminhos,
+        gerador_aleatorio,
     )
+
+    if not imagens_validas:
+        raise RuntimeError("nenhuma imagem pôde ser processada")
+
+    if len(imagens_validas) < 32:
+        print(
+            f"AVISO: foram processadas {len(imagens_validas)} imagens; "
+            "o trabalho pede pelo menos 32.",
+            file=sys.stderr,
+        )
+
+    padronizador, kmeans = treinar_kmeans(
+        amostras,
+        args.grupos,
+        args.semente,
+    )
+
+    linhas_csv = gerar_resultados(
+        args,
+        imagens_validas,
+        padronizador,
+        kmeans,
+    )
+
+    salvar_csv(args, linhas_csv)
+    salvar_metadados(
+        args,
+        len(imagens_validas),
+        padronizador,
+        kmeans,
+    )
+
     print(f"Concluído. Resultados salvos em: {args.saida.resolve()}")
 
 
-def main() -> int:
+def main():
     try:
-        processar(argumentos())
+        args = ler_argumentos()
+        processar(args)
         return 0
     except Exception as erro:
         print(f"ERRO: {erro}", file=sys.stderr)
