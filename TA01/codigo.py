@@ -185,7 +185,7 @@ def aplicar_filtros(imagem):
     imagem_float = imagem.astype(np.float32) / 255.0
     respostas = []
 
-    # Quatro filtros Gabor, um para cada orientação pedida no trabalho.
+    # quatro filtros Gabor
     for angulo in ORIENTACOES:
         filtro_gabor = cv2.getGaborKernel(
             ksize=(15, 15),
@@ -197,6 +197,7 @@ def aplicar_filtros(imagem):
             ktype=cv2.CV_32F,
         )
 
+        filtro_gabor = filtro_gabor - filtro_gabor.mean()
         soma = np.sum(np.abs(filtro_gabor)) + 1e-8
         filtro_gabor = filtro_gabor / soma
 
@@ -519,13 +520,6 @@ def processar(args):
 
     if not imagens_validas:
         raise RuntimeError("nenhuma imagem pôde ser processada")
-
-    if len(imagens_validas) < 32:
-        print(
-            f"AVISO: foram processadas {len(imagens_validas)} imagens; "
-            "o trabalho pede pelo menos 32.",
-            file=sys.stderr,
-        )
 
     padronizador, kmeans = treinar_kmeans(
         amostras,

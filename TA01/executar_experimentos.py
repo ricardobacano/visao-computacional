@@ -204,13 +204,6 @@ def executar_experimentos(args):
         )
         return 1
 
-    if quantidade_imagens < 32:
-        print(
-            f"AVISO: foram encontradas {quantidade_imagens} imagens; "
-            "o trabalho pede pelo menos 32.",
-            file=sys.stderr,
-        )
-
     args.saida.mkdir(parents=True, exist_ok=True)
 
     codigo = Path(__file__).resolve().with_name("codigo.py")

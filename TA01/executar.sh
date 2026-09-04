@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
 
-# Execução simplificada do projeto de segmentação por textura.
-# Arquivos Python necessários: codigo.py e executar_experimentos.py.
-
 set -Eeuo pipefail
 
 diretorio_projeto="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
