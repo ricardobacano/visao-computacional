@@ -1,0 +1,22 @@
+{
+  "board": {
+    "columns": 9,
+    "rows": 6,
+    "square_size_mm": 30.0
+  },
+  "capture": {
+    "source": "0",
+    "width": 1920,
+    "height": 1080
+  },
+  "projection": {
+    "points": [
+      {"label": "origem", "xyz_mm": [0.0, 0.0, 0.0]},
+      {"label": "eixo_x", "xyz_mm": [90.0, 0.0, 0.0]},
+      {"label": "eixo_y", "xyz_mm": [0.0, 90.0, 0.0]},
+      {"label": "eixo_z", "xyz_mm": [0.0, 0.0, -90.0]},
+      {"label": "centro_elevado", "xyz_mm": [120.0, 75.0, -60.0]}
+    ]
+  }
+}
+
