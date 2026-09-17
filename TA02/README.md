@@ -1,16 +1,25 @@
-# Calibração de câmera com OpenCV
+# Calibração de Câmera com OpenCV
 
-Projeto em Python para capturar imagens, calibrar uma câmera, remover a
-distorção da lente e projetar pontos conhecidos do espaço 3D em imagens 2D.
+Projeto desenvolvido para a disciplina de **Visão Computacional**, com o
+objetivo de calibrar uma câmera, obter seus parâmetros, corrigir a distorção da
+lente e projetar pontos conhecidos do espaço 3D em imagens 2D.
 
-## Por que Python?
+O projeto utiliza **Python** e **OpenCV** e permite trabalhar com webcam USB,
+câmera IP/RTSP ou arquivo de vídeo.
 
-O OpenCV oferece em Python as mesmas funções principais usadas em C++ neste
-experimento. Python reduz o código auxiliar, facilita a exportação de CSV/JSON e
-é suficiente para calibração offline. A versão C++ só seria necessária por
-exigência da disciplina ou por restrições severas de desempenho em tempo real.
+## Objetivos
 
-## Estrutura
+- Capturar imagens de um tabuleiro quadriculado em diferentes posições;
+- Detectar automaticamente os cantos internos do tabuleiro;
+- Calcular a matriz intrínseca da câmera;
+- Obter os coeficientes de distorção radial e tangencial;
+- Calcular o erro de reprojeção da calibração;
+- Remover a distorção presente nas imagens;
+- Estimar a posição e a orientação do tabuleiro;
+- Projetar pontos 3D conhecidos em coordenadas 2D;
+- Gerar imagens, arquivos CSV e JSON para utilização no relatório.
+
+## Estrutura do projeto
 
 ```text
 camera_calibration/
@@ -19,131 +28,234 @@ camera_calibration/
 │   ├── calibracao/
 │   └── validacao/
 ├── relatorio/
+│   └── ROTEIRO.md
 ├── resultados/
 ├── src/
+│   ├── common.py
 │   ├── capture.py
 │   ├── calibrate.py
 │   ├── undistort.py
 │   ├── project_points.py
-│   ├── run_pipeline.py
-│   └── common.py
+│   └── run_pipeline.py
+├── executar.sh
 ├── Makefile
-└── requirements.txt
+├── requirements.txt
+└── README.md
 ```
 
-## Instalação
+## Preparação inicial
 
-No Linux:
+Dê permissão de execução ao script:
 
 ```bash
-make setup
+chmod +x executar.sh
 ```
 
-Ou manualmente:
+Crie o ambiente virtual e instale as dependências:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp config.example.json config.json
+./executar.sh setup
 ```
 
-Edite `config.json` antes de capturar as imagens:
+Esse comando:
 
-- `columns`: quantidade de cantos internos na horizontal;
-- `rows`: quantidade de cantos internos na vertical;
+1. Cria o ambiente virtual `.venv`;
+2. Atualiza o `pip`;
+3. Instala NumPy e OpenCV;
+4. Cria o arquivo `config.json`, caso ainda não exista;
+5. Prepara as pastas de dados e resultados.
+
+## Configuração do tabuleiro
+
+Antes da captura, edite o arquivo `config.json`:
+
+```json
+{
+  "board": {
+    "columns": 9,
+    "rows": 6,
+    "square_size_mm": 30.0
+  },
+  "capture": {
+    "source": "0",
+    "width": 1920,
+    "height": 1080
+  }
+}
+```
+
+- `columns`: número de cantos internos na horizontal;
+- `rows`: número de cantos internos na vertical;
 - `square_size_mm`: lado real de cada quadrado, em milímetros;
-- `width` e `height`: resolução que será mantida em todas as etapas;
-- `projection.points`: pontos 3D que serão projetados.
+- `source`: índice da webcam, caminho de vídeo ou endereço da câmera;
+- `width` e `height`: resolução utilizada em todo o experimento.
 
-## 1. Captura
+> O OpenCV utiliza a quantidade de **cantos internos**, não a quantidade de
+> quadrados do tabuleiro.
 
-Webcam local:
+## Teste do ambiente
 
-```bash
-.venv/bin/python src/capture.py --source 0
-```
-
-Pressione `Espaço` ou `C` para salvar e `Q` ou `Esc` para sair. Capture entre
-15 e 30 imagens, mudando posição, inclinação, rotação e distância do tabuleiro.
-
-Para câmera IP, prefira uma variável de ambiente para não gravar credenciais no
-histórico do projeto:
+Para verificar a sintaxe, as dependências e os comandos do projeto:
 
 ```bash
-export CAMERA_SOURCE='rtsp://usuario:senha@endereco/rota'
-.venv/bin/python src/capture.py
-unset CAMERA_SOURCE
+./executar.sh test
 ```
 
-O script também aceita captura automática, útil quando não há teclado próximo:
+O teste mostra as versões do OpenCV e NumPy e verifica todos os scripts sem
+precisar das imagens da câmera.
+
+## Captura das imagens
+
+### Webcam padrão
 
 ```bash
-.venv/bin/python src/capture.py --auto-count 20 --interval 3
+./executar.sh capture 0
 ```
 
-Separe algumas fotografias que não participaram da calibração em
-`data/validacao/`. Elas devem conter o tabuleiro para o experimento 3D→2D. Uma
-imagem adicional do ambiente, com linhas retas, ajuda a demonstrar a remoção da
-distorção.
+Durante a captura:
 
-## 2. Calibração
+- Pressione `Espaço` ou `C` para salvar uma imagem;
+- Pressione `Q` ou `Esc` para encerrar.
+
+Capture entre **15 e 30 imagens**, variando:
+
+- Posição do tabuleiro;
+- Distância em relação à câmera;
+- Inclinação e rotação;
+- Presença do tabuleiro no centro e nas bordas da imagem.
+
+Evite imagens borradas, repetidas, com reflexos ou com o tabuleiro cortado.
+
+### Imagens de validação
+
+Depois da captura principal, registre imagens separadas para validar os
+resultados:
 
 ```bash
-.venv/bin/python src/calibrate.py --config config.json
+./executar.sh validation 0
 ```
 
-Principais saídas:
+Essas imagens são armazenadas em `data/validacao/` e não participam do cálculo
+inicial da calibração. Algumas delas devem mostrar o tabuleiro para o
+experimento de projeção 3D para 2D.
 
-- `resultados/calibracao/calibration.npz`: parâmetros para os demais scripts;
-- `resultados/calibracao/calibration.json`: matrizes e métricas legíveis;
-- `resultados/calibracao/reprojection_errors.csv`: erro por imagem;
-- `resultados/calibracao/cantos_detectados/`: conferência visual.
-
-## 3. Remoção da distorção
+### Câmera IP/RTSP
 
 ```bash
-.venv/bin/python src/undistort.py --alpha 1.0
+./executar.sh capture 'rtsp://usuario:senha@endereco/rota'
 ```
 
-`alpha=1` preserva mais campo de visão e pode deixar bordas pretas. `alpha=0`
-prioriza pixels válidos e produz mais recorte. O script salva imagens corrigidas
-e comparações lado a lado.
+Não salve credenciais, endereços internos ou URLs privadas no GitHub.
 
-## 4. Projeção 3D para 2D
+## Execução dos experimentos
+
+### Calibração
 
 ```bash
-.venv/bin/python src/project_points.py --config config.json
+./executar.sh calibrate
 ```
 
-O sistema de coordenadas usa o primeiro canto interno como origem. X segue as
-colunas, Y segue as linhas e Z negativo aponta para fora do tabuleiro, em
-direção à câmera. O script estima a pose com `solvePnP`, projeta os pontos com
-`projectPoints` e gera:
+O programa detecta os cantos, calcula a matriz intrínseca, os coeficientes de
+distorção e os erros de reprojeção.
 
-- `resultados/projecao/projected_points.csv`;
-- `resultados/projecao/poses.json`;
-- imagens com pontos e eixos sobrepostos.
-
-## Execução completa
-
-Depois que as pastas de calibração e validação estiverem preenchidas:
+### Remoção da distorção
 
 ```bash
-.venv/bin/python src/run_pipeline.py --config config.json
+./executar.sh undistort
 ```
 
-Ou:
+São produzidas imagens corrigidas e comparações lado a lado entre a imagem
+original e a imagem sem distorção.
+
+### Projeção de pontos 3D para 2D
 
 ```bash
-make pipeline
+./executar.sh project
 ```
 
-## Cuidados com câmera empresarial
+O programa utiliza `solvePnP` para estimar a pose do tabuleiro e
+`projectPoints` para determinar as coordenadas dos pontos 3D na imagem.
 
-- Mantenha lente, foco, zoom e resolução fixos durante todo o experimento.
-- Não publique endereços IP, credenciais ou configuração da rede.
-- Revise as imagens para retirar pessoas, documentos, telas e áreas internas.
-- O `.gitignore` impede por padrão o envio das imagens brutas ao Git.
-- Publique apenas evidências autorizadas e necessárias ao relatório.
+### Pipeline completo
+
+Depois de preencher as pastas `data/calibracao/` e `data/validacao/`, execute:
+
+```bash
+./executar.sh all
+```
+
+Esse comando testa o ambiente e executa automaticamente:
+
+1. Verificação das imagens;
+2. Calibração da câmera;
+3. Remoção da distorção;
+4. Estimativa da pose;
+5. Projeção dos pontos 3D;
+6. Exportação dos resultados.
+
+## Comandos disponíveis
+
+| Comando | Função |
+|---|---|
+| `./executar.sh setup` | Cria o ambiente e instala as dependências |
+| `./executar.sh test` | Testa dependências, sintaxe e comandos |
+| `./executar.sh capture 0` | Captura imagens de calibração |
+| `./executar.sh validation 0` | Captura imagens de validação |
+| `./executar.sh calibrate` | Executa somente a calibração |
+| `./executar.sh undistort` | Corrige a distorção das imagens |
+| `./executar.sh project` | Executa a projeção 3D para 2D |
+| `./executar.sh all` | Executa o experimento completo |
+| `./executar.sh help` | Exibe a ajuda do script |
+
+## Resultados gerados
+
+```text
+resultados/
+├── calibracao/
+│   ├── calibration.npz
+│   ├── calibration.json
+│   ├── reprojection_errors.csv
+│   └── cantos_detectados/
+├── distorcao/
+│   ├── undistortion.json
+│   ├── corrigidas/
+│   └── comparacoes/
+└── projecao/
+    ├── projected_points.csv
+    ├── poses.json
+    └── imagens/
+```
+
+### Principais informações
+
+- `calibration.json`: matriz intrínseca e coeficientes de distorção;
+- `calibration.npz`: parâmetros utilizados pelos demais scripts;
+- `reprojection_errors.csv`: erro de cada imagem de calibração;
+- `undistortion.json`: parâmetros usados na correção;
+- `projected_points.csv`: coordenadas 3D e suas projeções 2D;
+- `poses.json`: rotação, translação e erro de cada imagem;
+- `comparacoes/`: imagens para demonstrar a correção no relatório;
+- `projecao/imagens/`: pontos e eixos projetados sobre as imagens.
+
+## Sistema de coordenadas
+
+O primeiro canto interno do tabuleiro representa a origem `(0, 0, 0)`:
+
+- O eixo X acompanha as colunas do tabuleiro;
+- O eixo Y acompanha as linhas;
+- O eixo Z é perpendicular ao plano do tabuleiro;
+- As medidas utilizadas pelo projeto estão em milímetros.
+
+## Recomendações para a calibração
+
+- Mantenha a mesma resolução em todas as etapas;
+- Não altere o foco, o zoom ou a lente depois da calibração;
+- Faça o tabuleiro ocupar diferentes regiões da imagem;
+- Utilize imagens com boa iluminação e nitidez;
+- Confira as imagens em `cantos_detectados/`;
+- Analise o erro geral e o erro individual das imagens;
+- Repita a calibração caso existam imagens com erro muito elevado.
+
+As imagens brutas das pastas `data/calibracao/` e `data/validacao/` são
+ignoradas por padrão pelo `.gitignore`.
 
