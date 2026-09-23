@@ -112,11 +112,6 @@ def write_json(path: str | Path, content: dict[str, Any]) -> None:
         file.write("\n")
 
 
-def parse_capture_source(value: str) -> int | str:
-    stripped = value.strip()
-    return int(stripped) if stripped.isdigit() else stripped
-
-
 def ensure_same_resolution(image: np.ndarray, expected_size: tuple[int, int]) -> None:
     height, width = image.shape[:2]
     if (width, height) != expected_size:
@@ -124,4 +119,3 @@ def ensure_same_resolution(image: np.ndarray, expected_size: tuple[int, int]) ->
             f"Resolucao da imagem {(width, height)} difere da calibracao "
             f"{expected_size}. Use a mesma resolucao em todo o experimento."
         )
-

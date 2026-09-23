@@ -1,8 +1,6 @@
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
-CAMERA_SOURCE ?= 0
-
-.PHONY: setup check capture calibrate undistort project pipeline
+.PHONY: setup check calibrate undistort project pipeline
 
 setup:
 	python3 -m venv .venv
@@ -12,9 +10,6 @@ setup:
 
 check:
 	$(PYTHON) -m compileall -q src
-
-capture:
-	CAMERA_SOURCE='$(CAMERA_SOURCE)' $(PYTHON) src/capture.py --config config.json
 
 calibrate:
 	$(PYTHON) src/calibrate.py --config config.json

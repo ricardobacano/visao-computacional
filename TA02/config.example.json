@@ -4,11 +4,6 @@
     "rows": 6,
     "square_size_mm": 30.0
   },
-  "capture": {
-    "source": "0",
-    "width": 1920,
-    "height": 1080
-  },
   "projection": {
     "points": [
       {"label": "origem", "xyz_mm": [0.0, 0.0, 0.0]},
@@ -19,4 +14,3 @@
     ]
   }
 }
-
