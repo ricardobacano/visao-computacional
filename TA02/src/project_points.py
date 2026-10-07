@@ -43,14 +43,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def projection_points(config: dict[str, Any], square_size_mm: float):
+def projection_points(
+    config: dict[str, Any], square_sizes_mm: tuple[float, float]
+):
     configured = config.get("projection", {}).get("points")
     if not configured:
+        square_size_x_mm, square_size_y_mm = square_sizes_mm
+        square_size_z_mm = min(square_sizes_mm)
         configured = [
             {"label": "origem", "xyz_mm": [0, 0, 0]},
-            {"label": "eixo_x", "xyz_mm": [3 * square_size_mm, 0, 0]},
-            {"label": "eixo_y", "xyz_mm": [0, 3 * square_size_mm, 0]},
-            {"label": "eixo_z", "xyz_mm": [0, 0, -3 * square_size_mm]},
+            {"label": "eixo_x", "xyz_mm": [3 * square_size_x_mm, 0, 0]},
+            {"label": "eixo_y", "xyz_mm": [0, 3 * square_size_y_mm, 0]},
+            {"label": "eixo_z", "xyz_mm": [0, 0, -3 * square_size_z_mm]},
         ]
 
     labels: list[str] = []
@@ -68,9 +72,9 @@ def projection_points(config: dict[str, Any], square_size_mm: float):
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    pattern_size, square_size_mm = board_from_config(config)
-    board_points = create_object_points(pattern_size, square_size_mm)
-    labels, points_3d = projection_points(config, square_size_mm)
+    pattern_size, square_sizes_mm = board_from_config(config)
+    board_points = create_object_points(pattern_size, square_sizes_mm)
+    labels, points_3d = projection_points(config, square_sizes_mm)
 
     calibration = load_calibration(args.calibration)
     camera_matrix = calibration["camera_matrix"]

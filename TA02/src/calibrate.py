@@ -31,8 +31,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    pattern_size, square_size_mm = board_from_config(config)
-    object_template = create_object_points(pattern_size, square_size_mm)
+    pattern_size, square_sizes_mm = board_from_config(config)
+    square_size_x_mm, square_size_y_mm = square_sizes_mm
+    object_template = create_object_points(pattern_size, square_sizes_mm)
     image_paths = list_images(args.images)
 
     output_dir = Path(args.output)
@@ -125,7 +126,8 @@ def main() -> None:
     report = {
         "board": {
             "internal_corners": list(pattern_size),
-            "square_size_mm": square_size_mm,
+            "square_size_x_mm": square_size_x_mm,
+            "square_size_y_mm": square_size_y_mm,
         },
         "image_size_px": list(image_size),
         "images_total": len(image_paths),
@@ -159,4 +161,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

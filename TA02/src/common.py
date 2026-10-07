@@ -24,29 +24,35 @@ def load_config(path: str | Path) -> dict[str, Any]:
         return json.load(file)
 
 
-def board_from_config(config: dict[str, Any]) -> tuple[tuple[int, int], float]:
+def board_from_config(
+    config: dict[str, Any],
+) -> tuple[tuple[int, int], tuple[float, float]]:
     board = config.get("board", {})
     columns = int(board.get("columns", 0))
     rows = int(board.get("rows", 0))
-    square_size_mm = float(board.get("square_size_mm", 0.0))
+    square_size_x_mm = float(board.get("square_size_x_mm", 0.0))
+    square_size_y_mm = float(board.get("square_size_y_mm", 0.0))
 
     if columns < 2 or rows < 2:
         raise ValueError("columns e rows devem indicar os cantos internos do tabuleiro.")
-    if square_size_mm <= 0:
-        raise ValueError("square_size_mm deve ser maior que zero.")
+    if square_size_x_mm <= 0 or square_size_y_mm <= 0:
+        raise ValueError(
+            "square_size_x_mm e square_size_y_mm devem ser maiores que zero."
+        )
 
-    return (columns, rows), square_size_mm
+    return (columns, rows), (square_size_x_mm, square_size_y_mm)
 
 
 def create_object_points(
-    pattern_size: tuple[int, int], square_size_mm: float
+    pattern_size: tuple[int, int], square_sizes_mm: tuple[float, float]
 ) -> np.ndarray:
     """Cria os cantos 3D do tabuleiro no plano Z=0, em milimetros."""
     columns, rows = pattern_size
+    square_size_x_mm, square_size_y_mm = square_sizes_mm
     points = np.zeros((columns * rows, 3), dtype=np.float32)
-    points[:, :2] = (
-        np.mgrid[0:columns, 0:rows].T.reshape(-1, 2) * square_size_mm
-    )
+    grid = np.mgrid[0:columns, 0:rows].T.reshape(-1, 2)
+    points[:, 0] = grid[:, 0] * square_size_x_mm
+    points[:, 1] = grid[:, 1] * square_size_y_mm
     return points
 
 
